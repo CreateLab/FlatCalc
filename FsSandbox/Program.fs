@@ -2,38 +2,43 @@
 open System.IO
 open System.Globalization
 
-/// Опишем структуру для удобства
-type ExchangeRecord = {
-    Nominal : int
-    Date    : DateTime
-    Curs    : decimal
-    Cdx     : string
-}
+module CurrencyCalc =
+
+    // --- Константы (магические числа) ---
+    [<Literal>]
+    let CsvPath = "RC_F01_01_2014_T29_12_2024.csv" // путь к файлу CSV
+
+    [<Literal>]
+    let SkipHeaderLines = 1 // сколько строк пропускаем для заголовка
+
+    let FirstPayment = 2_000_000m // первый взнос
+    let MonthlyPayment = 87_100m // ежемесячный платёж
+
+    // Тип для удобства хранения строк CSV
+    type ExchangeRecord =
+        { Nominal: int
+          Date: DateTime
+          Curs: decimal
+          Cdx: string }
+
+open CurrencyCalc
 
 [<EntryPoint>]
-let main argv =
-
-    // Путь к вашему csv-файлу
-    let csvPath = "RC_F01_01_2014_T29_12_2024.csv"
-    
-    // Месячный платеж
-    let monthlyPayment = 87_100m
-    
-    // Начальный взнос
-    let entryFee = 2_000_000m
-
-    // Считываем все строки (первая строка — заголовок, поэтому её пропускаем)
+let main _ =
+    // 1. Считываем данные
     let lines =
-        File.ReadAllLines(csvPath)
-        |> Array.skip 1  // Пропускаем заголовок: nominal,data,curs,cdx
+        File.ReadAllLines(CurrencyCalc.CsvPath)
+        |> Array.skip CurrencyCalc.SkipHeaderLines // пропускаем заголовок CSV
 
-    // Функция для разбора строки
-    let parseLine (line : string) =
+    // Функция разбора строки
+    let parseLine (line:string): ExchangeRecord =
         let parts = line.Split(',')
         let nominal = Int32.Parse(parts.[0])
-        let date    = DateTime.Parse(parts.[1], CultureInfo.InvariantCulture)
-        let curs    = Decimal.Parse(parts.[2], CultureInfo.InvariantCulture)
-        let cdx     = parts.[3]
+        // Парсим дату
+        let date = DateTime.Parse(parts.[1], CultureInfo.InvariantCulture)
+        // Парсим курс (точка как разделитель)
+        let curs = Decimal.Parse(parts.[2], CultureInfo.InvariantCulture)
+        let cdx  = parts.[3]
         {
             Nominal = nominal
             Date    = date
@@ -41,45 +46,34 @@ let main argv =
             Cdx     = cdx
         }
 
-    // Парсим все строки в массив записей
-    let records = lines |> Array.map parseLine
+    // 2. Парсим строки и (при необходимости) пропускаем первую запись данных
+    let allRecords = lines |> Array.map parseLine
+    let records = allRecords |> Array.skip 1 // Пропустить первую запись, если так сказано в задаче
 
-    // ----- Основная логика -----
+    // 3. Группировка по (год, месяц), сортировка
+    let groupedByMonth =
+        records
+        |> Array.groupBy (fun r -> r.Date.Year, r.Date.Month)
+        |> Array.sortBy (fun ((year, month), _) -> year, month)
 
-    // 1. Определяем последнюю запись (по порядку в файле).
-    //    Допустим, что "последняя" — это реально последняя строка в CSV.
-    //    Если же нужно по самой свежей дате, то можно использовать maxBy (fun r -> r.Date).
-    let lastRecord = records |> Array.last
+    // 4. Для самого раннего месяца берём первый взнос (2 000 000 руб),
+    //    для остальных — ежемесячный платёж (87 100 руб).
+    //    Считаем средний курс, конвертируем.
+    let monthlyUsd =
+        groupedByMonth
+        |> Array.mapi (fun i ((year, month), recsInMonth) ->
+            let avgRate = recsInMonth |> Array.averageBy (fun r -> float r.Curs) |> decimal
 
-    // 2. Пропускаем последнюю запись для расчёта конверсии 87 100 руб
-    let recordsExceptLast = records |> Array.take (records.Length - 1)
-    // или records |> Array.skipLast 1  (F# 6.0+)
+            let rubAmount =
+                if i = 0 then
+                    CurrencyCalc.FirstPayment
+                else
+                    CurrencyCalc.MonthlyPayment
 
-    // 3. Конвертация 87 100 рублей по каждому "оставшемуся" курсу
-    //    (т.е. без учёта последней записи)
-    let converted =
-        recordsExceptLast
-        |> Array.map (fun r -> monthlyPayment / r.Curs)
+            rubAmount / avgRate)
 
-    // 4. Сумма сконвертированных значений
-    let totalSum = converted |> Array.sum
+    // 5. Суммируем все результаты и выводим в консоль.
+    let totalUsd = monthlyUsd |> Array.sum
+    printfn "Итоговая сумма в долларах: %M" totalUsd
 
-    // 5. Отдельно конвертируем начальный взнос  по "последней" записи
-   
-    let convertedEntry = entryFee / lastRecord.Curs
-
-    // ----- Вывод результатов -----
-
-   
-
-  
-    printfn "Общая сумма после конверсии (без последней записи): %M USD\n" totalSum
-
-    
-    printfn "Последняя запись: Дата = %O, Курс = %M" lastRecord.Date lastRecord.Curs
-    printfn "Первый взнос -> %M USD (по последней записи)" convertedEntry
-    
-    //общая сумма включаяя последнюю запись
-    printfn "Общая сумма включаяя последнюю запись: %M USD" (totalSum + convertedEntry)
-
-    0 // Возвращаемое значение main
+    0

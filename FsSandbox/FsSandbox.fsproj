@@ -10,8 +10,6 @@
         <Content Include="RC_F01_01_2014_T29_12_2024.csv">
           <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </Content>
-        <Content Include="Readme.md" />
-        <Content Include=".gitignore" />
     </ItemGroup>
 
 </Project>
